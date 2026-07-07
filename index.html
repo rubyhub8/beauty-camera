@@ -1,4 +1,67 @@
-// 升級後的拍照處理函式 (直接覆蓋原本的 snapBtn.addEventListener)
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>專業美肌相機 (後台精修版)</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    body { margin: 0; padding: 0; background: #000; overflow: hidden; display: flex; flex-direction: column; justify-content: center; height: 100vh; font-family: sans-serif; }
+    /* 預覽畫面：保持原圖流暢度 */
+    canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    
+    /* 拍照閃光特效 */
+    #flash { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; opacity: 0; pointer-events: none; transition: opacity 0.3s ease-out; z-index: 100; }
+    
+    /* 狀態提示 */
+    #statusInfo { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); color: white; padding: 10px 20px; border-radius: 20px; font-size: 14px; font-weight: bold; pointer-events: none; z-index: 10; display: none; }
+
+    .controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); width: 85%; max-width: 400px; display: flex; flex-direction: column; gap: 10px; z-index: 10; }
+    .snap-btn { width: 100%; padding: 18px; border: none; border-radius: 50px; background: white; color: black; font-size: 20px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); transition: 0.1s; }
+    .snap-btn:active { background: #ddd; transform: scale(0.95); }
+  </style>
+</head>
+<body>
+  <div id="flash"></div>
+  <div id="statusInfo">處理中，請稍候...</div>
+  
+  <video id="input_video" playsinline style="display: none;"></video>
+  <canvas id="output_canvas"></canvas>
+
+  <div class="controls">
+    <button id="snapBtn" class="snap-btn">📸 拍照</button>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const snapBtn = document.getElementById('snapBtn');
+    const flashElement = document.getElementById('flash');
+    const statusInfo = document.getElementById('statusInfo');
+
+    let latestImage = null;
+    let latestLandmarks = null;
+
+    // 1. 即時預覽引擎 (只顯示原圖，確保 60fps 不卡頓)
+    function onResults(results) {
+      latestImage = results.image;
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        latestLandmarks = results.multiFaceLandmarks[0];
+      } else {
+        latestLandmarks = null;
+      }
+
+      if (canvasElement.width !== results.image.width || canvasElement.height !== results.image.height) {
+        canvasElement.width = results.image.width;
+        canvasElement.height = results.image.height;
+      }
+      
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+    }
+
+    // 升級後的拍照處理函式 (直接覆蓋原本的 snapBtn.addEventListener)
       snapBtn.addEventListener('click', async () => {
         if (!latestImage || !latestLandmarks) return;
         
@@ -71,3 +134,27 @@
         statusInfo.style.display = 'none';
         snapBtn.disabled = false;
       });
+
+    const faceMesh = new FaceMesh({locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+    }});
+    
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    faceMesh.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await faceMesh.send({image: videoElement});
+      },
+      width: 1280,
+      height: 720
+    });
+    camera.start();
+  </script>
+</body>
+</html>

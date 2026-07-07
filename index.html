@@ -2,35 +2,48 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>專業美肌相機 (重度遮瑕版)</title>
+  <title>專業美肌相機 (動態單點去斑版)</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
     body { margin: 0; padding: 0; background: #111; overflow: hidden; display: flex; flex-direction: column; justify-content: center; height: 100vh; font-family: sans-serif; }
-    canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-    .controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.75); padding: 20px; border-radius: 16px; width: 85%; max-width: 400px; color: white; backdrop-filter: blur(5px); }
-    .control-group { margin-bottom: 15px; display: flex; align-items: center; }
-    .control-group label { flex: 1; font-size: 15px; font-weight: bold; }
+    canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); cursor: crosshair; }
+    
+    /* 頂部提示文字 */
+    .hint { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(255, 59, 48, 0.8); color: white; padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: bold; pointer-events: none; z-index: 10; }
+    
+    .controls { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.75); padding: 15px; border-radius: 16px; width: 90%; max-width: 400px; color: white; backdrop-filter: blur(5px); display: flex; flex-direction: column; gap: 10px; }
+    .control-group { display: flex; align-items: center; }
+    .control-group label { flex: 1; font-size: 14px; font-weight: bold; }
     .control-group input { flex: 2; }
-    .snap-btn { width: 100%; padding: 14px; border: none; border-radius: 10px; background: #FF3B30; color: white; font-size: 18px; font-weight: bold; cursor: pointer; transition: 0.2s; }
-    .snap-btn:active { background: #CC2E26; transform: scale(0.98); }
+    
+    .btn-group { display: flex; gap: 10px; }
+    .btn { flex: 1; padding: 12px; border: none; border-radius: 10px; color: white; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    .btn-clear { background: #555; }
+    .btn-clear:active { background: #333; transform: scale(0.98); }
+    .btn-snap { background: #FF3B30; }
+    .btn-snap:active { background: #CC2E26; transform: scale(0.98); }
   </style>
 </head>
 <body>
+  <div class="hint">👆 直接點擊畫面上的斑點進行消除</div>
   <video id="input_video" playsinline style="display: none;"></video>
   <canvas id="output_canvas"></canvas>
 
   <div class="controls">
     <div class="control-group">
-      <label>粉底磨皮：</label>
+      <label>全臉粉底：</label>
       <input type="range" id="blurRange" min="0" max="40" value="25">
     </div>
     <div class="control-group">
-      <label>強力遮瑕：</label>
-      <input type="range" id="concealRange" min="0" max="1.0" step="0.05" value="0.8">
+      <label>點擊遮瑕強度：</label>
+      <input type="range" id="spotRange" min="0.1" max="1.0" step="0.05" value="0.8">
     </div>
-    <button id="snapBtn" class="snap-btn">📸 拍照儲存</button>
+    <div class="btn-group">
+      <button id="clearBtn" class="btn btn-clear">清除所有單點</button>
+      <button id="snapBtn" class="btn btn-snap">📸 拍照</button>
+    </div>
   </div>
 
   <script>
@@ -39,8 +52,52 @@
     const canvasCtx = canvasElement.getContext('2d');
     
     const blurRange = document.getElementById('blurRange');
-    const concealRange = document.getElementById('concealRange');
+    const spotRange = document.getElementById('spotRange');
     const snapBtn = document.getElementById('snapBtn');
+    const clearBtn = document.getElementById('clearBtn');
+
+    // 儲存使用者點擊的斑點綁定索引
+    let userSpots = [];
+    // 儲存當前幀的臉部特徵點，供點擊事件計算距離使用
+    let currentLandmarks = null;
+
+    // 監聽畫布點擊事件
+    canvasElement.addEventListener('pointerdown', (e) => {
+      if (!currentLandmarks) return;
+
+      const rect = canvasElement.getBoundingClientRect();
+      const scaleX = canvasElement.width / rect.width;
+      const scaleY = canvasElement.height / rect.height;
+      
+      // 關鍵：因為 CSS 有 transform: scaleX(-1) 鏡像翻轉，X 座標必須反向計算
+      const clickX = canvasElement.width - ((e.clientX - rect.left) * scaleX);
+      const clickY = (e.clientY - rect.top) * scaleY;
+
+      // 尋找距離點擊位置最近的臉部網格頂點
+      let minDist = Infinity;
+      let closestIndex = -1;
+
+      for (let i = 0; i < currentLandmarks.length; i++) {
+        const lx = currentLandmarks[i].x * canvasElement.width;
+        const ly = currentLandmarks[i].y * canvasElement.height;
+        const dist = Math.hypot(lx - clickX, ly - clickY);
+        
+        if (dist < minDist) {
+          minDist = dist;
+          closestIndex = i;
+        }
+      }
+
+      // 如果找到頂點，將該頂點索引加入斑點清單
+      if (closestIndex !== -1) {
+        userSpots.push(closestIndex);
+      }
+    });
+
+    // 清除單點按鈕
+    clearBtn.addEventListener('click', () => {
+      userSpots = [];
+    });
 
     function onResults(results) {
       if (canvasElement.width !== results.image.width || canvasElement.height !== results.image.height) {
@@ -48,39 +105,44 @@
         canvasElement.height = results.image.height;
       }
 
+      // 儲存當前特徵點供點擊運算
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        currentLandmarks = results.multiFaceLandmarks[0];
+      } else {
+        currentLandmarks = null;
+      }
+
+      // 1. 繪製原圖
       canvasCtx.globalCompositeOperation = 'source-over';
       canvasCtx.filter = 'none';
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-        const landmarks = results.multiFaceLandmarks[0];
-        
-        const nose = landmarks[1];
-        const leftCheek = landmarks[234];
-        const rightCheek = landmarks[454];
-        const top = landmarks[10];
-        const chin = landmarks[152];
+      if (currentLandmarks) {
+        const nose = currentLandmarks[1];
+        const leftCheek = currentLandmarks[234];
+        const rightCheek = currentLandmarks[454];
+        const top = currentLandmarks[10];
+        const chin = currentLandmarks[152];
 
-        // --- 全臉粉底 ---
-        const centerX = nose.x * canvasElement.width;
-        const centerY = nose.y * canvasElement.height; 
         const faceWidth = Math.abs(rightCheek.x - leftCheek.x) * canvasElement.width;
         const faceHeight = Math.abs(chin.y - top.y) * canvasElement.height;
-        const radiusX = faceWidth * 0.75; 
-        const radiusY = faceHeight * 0.75;
 
+        // --- 基礎全臉粉底 ---
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = canvasElement.width;
         tempCanvas.height = canvasElement.height;
         const tempCtx = tempCanvas.getContext('2d');
 
-        // 強力壓低對比，把斑點的銳利邊緣強行模糊化
         const blurVal = blurRange.value;
-        tempCtx.filter = `blur(${blurVal}px) brightness(1.15) contrast(0.75)`;
+        tempCtx.filter = `blur(${blurVal}px) brightness(1.1) contrast(0.8)`;
         tempCtx.drawImage(results.image, 0, 0, tempCanvas.width, tempCanvas.height);
 
         tempCtx.globalCompositeOperation = 'destination-in';
-        const gradient = tempCtx.createRadialGradient(centerX, centerY, radiusX * 0.85, centerX, centerY, radiusX * 1.15);
+        const centerX = nose.x * canvasElement.width;
+        const centerY = nose.y * canvasElement.height; 
+        const radiusX = faceWidth * 0.75; 
+        const radiusY = faceHeight * 0.75;
+        const gradient = tempCtx.createRadialGradient(centerX, centerY, radiusX * 0.8, centerX, centerY, radiusX * 1.2);
         gradient.addColorStop(0, 'rgba(0, 0, 0, 1)'); 
         gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
         tempCtx.fillStyle = gradient;
@@ -88,25 +150,22 @@
         tempCtx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
         tempCtx.fill();
 
+        // 挖空五官
         tempCtx.globalCompositeOperation = 'destination-out';
         tempCtx.fillStyle = 'black'; 
         const leftEyeIndices = [33, 160, 158, 133, 153, 144];
         const rightEyeIndices = [362, 385, 387, 263, 373, 380];
         const mouthIndices = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95];
-
         const eraseFeature = (indices) => {
           tempCtx.beginPath();
           indices.forEach((index, i) => {
-            const pt = landmarks[index];
-            const px = pt.x * canvasElement.width;
-            const py = pt.y * canvasElement.height;
-            if (i === 0) tempCtx.moveTo(px, py);
-            else tempCtx.lineTo(px, py);
+            const pt = currentLandmarks[index];
+            if (i === 0) tempCtx.moveTo(pt.x * canvasElement.width, pt.y * canvasElement.height);
+            else tempCtx.lineTo(pt.x * canvasElement.width, pt.y * canvasElement.height);
           });
           tempCtx.closePath();
           tempCtx.fill();
         };
-
         eraseFeature(leftEyeIndices);
         eraseFeature(rightEyeIndices);
         eraseFeature(mouthIndices);
@@ -114,45 +173,34 @@
         canvasCtx.globalCompositeOperation = 'source-over';
         canvasCtx.drawImage(tempCanvas, 0, 0);
 
-        // --- 顴骨重度遮瑕 (Color Dodge) ---
-        const concealStrength = concealRange.value;
-        if (concealStrength > 0) {
-            canvasCtx.globalCompositeOperation = 'color-dodge';
-            canvasCtx.globalAlpha = concealStrength;
+        // --- 手動單點遮瑕 (Color Dodge 暴力提亮去斑) ---
+        if (userSpots.length > 0) {
+          const spotStrength = spotRange.value;
+          canvasCtx.globalCompositeOperation = 'color-dodge';
+          canvasCtx.globalAlpha = spotStrength;
 
-            const drawConcealer = (x, y, radiusX, radiusY, rotation) => {
-                const grad = canvasCtx.createRadialGradient(x, y, 0, x, y, radiusX);
-                // 提高不透明度與白度
-                grad.addColorStop(0, 'rgba(255, 230, 210, 0.9)'); 
-                grad.addColorStop(0.6, 'rgba(255, 230, 210, 0.4)');
-                grad.addColorStop(1, 'rgba(255, 230, 210, 0)');
-                
-                canvasCtx.save();
-                canvasCtx.translate(x, y);
-                canvasCtx.rotate(rotation);
-                canvasCtx.fillStyle = grad;
-                canvasCtx.beginPath();
-                canvasCtx.ellipse(0, 0, radiusX, radiusY, 0, 0, 2 * Math.PI);
-                canvasCtx.fill();
-                canvasCtx.restore();
-            };
+          userSpots.forEach(index => {
+            const pt = currentLandmarks[index];
+            const px = pt.x * canvasElement.width;
+            const py = pt.y * canvasElement.height;
+            // 根據臉部比例決定遮瑕點的大小，約為臉寬的 5%
+            const spotRadius = faceWidth * 0.05; 
 
-            // 鎖定左側顴骨 (117)
-            const leftCheekbone = landmarks[117];
-            drawConcealer(leftCheekbone.x * canvasElement.width, leftCheekbone.y * canvasElement.height, faceWidth * 0.25, faceWidth * 0.18, -0.2);
+            const spotGrad = canvasCtx.createRadialGradient(px, py, 0, px, py, spotRadius);
+            // 使用淺膚色進行光學提亮，強行蓋掉黑色素
+            spotGrad.addColorStop(0, 'rgba(255, 235, 220, 0.8)'); 
+            spotGrad.addColorStop(0.5, 'rgba(255, 235, 220, 0.3)');
+            spotGrad.addColorStop(1, 'rgba(255, 235, 220, 0)');
 
-            // 鎖定右側顴骨 (346)
-            const rightCheekbone = landmarks[346];
-            drawConcealer(rightCheekbone.x * canvasElement.width, rightCheekbone.y * canvasElement.height, faceWidth * 0.25, faceWidth * 0.18, 0.2);
+            canvasCtx.beginPath();
+            canvasCtx.fillStyle = spotGrad;
+            canvasCtx.arc(px, py, spotRadius, 0, 2 * Math.PI);
+            canvasCtx.fill();
+          });
 
-            // 法令紋提亮
-            const leftNoseWing = landmarks[114];
-            const rightNoseWing = landmarks[343];
-            drawConcealer(leftNoseWing.x * canvasElement.width, leftNoseWing.y * canvasElement.height, faceWidth * 0.1, faceWidth * 0.15, 0.3);
-            drawConcealer(rightNoseWing.x * canvasElement.width, rightNoseWing.y * canvasElement.height, faceWidth * 0.1, faceWidth * 0.15, -0.3);
-
-            canvasCtx.globalAlpha = 1.0;
-            canvasCtx.globalCompositeOperation = 'source-over';
+          // 恢復預設值
+          canvasCtx.globalAlpha = 1.0;
+          canvasCtx.globalCompositeOperation = 'source-over';
         }
       }
     }

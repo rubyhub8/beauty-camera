@@ -2,25 +2,44 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>美肌相機 - 精準磨皮</title>
+  <title>美肌相機 - 進階控制</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <style>
-    body { background: #222; display: flex; justify-content: center; margin-top: 50px; }
-    canvas { transform: scaleX(-1); border-radius: 10px; }
+    body { background: #222; display: flex; flex-direction: column; align-items: center; margin-top: 20px; font-family: sans-serif; color: white; }
+    canvas { transform: scaleX(-1); border-radius: 10px; max-width: 100%; }
+    /* 控制選單樣式 */
+    .controls { margin-top: 20px; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 8px; width: 90%; max-width: 400px; }
+    .control-group { margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+    .control-group label { flex: 1; font-size: 14px; }
+    .control-group input { flex: 2; }
   </style>
 </head>
 <body>
   <video id="input_video" playsinline style="display: none;"></video>
   <canvas id="output_canvas" width="640" height="480"></canvas>
 
+  <div class="controls">
+    <div class="control-group">
+      <label>磨皮強度：</label>
+      <input type="range" id="blurRange" min="0" max="15" value="6">
+    </div>
+    <div class="control-group">
+      <label>美白亮度：</label>
+      <input type="range" id="brightRange" min="1.0" max="1.5" step="0.05" value="1.15">
+    </div>
+  </div>
+
   <script>
     const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
+    
+    // 取得滑桿 DOM 元件
+    const blurRange = document.getElementById('blurRange');
+    const brightRange = document.getElementById('brightRange');
 
     function onResults(results) {
-      // 1. 畫出清晰的原圖
       canvasCtx.globalCompositeOperation = 'source-over';
       canvasCtx.filter = 'none';
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
@@ -28,7 +47,6 @@
       if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
 
-        // 2. 建立遮罩範圍（以鼻樑為中心的橢圓形）
         canvasCtx.save();
         canvasCtx.beginPath();
         
@@ -39,10 +57,12 @@
         canvasCtx.ellipse(x, y, 100, 140, 0, 0, 2 * Math.PI);
         canvasCtx.clip();
 
-        // 3. 疊加柔焦與提亮效果
-        canvasCtx.filter = 'blur(6px) brightness(1.15)';
-        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        // 關鍵：即時讀取畫面上滑桿的數值並套用
+        const blurVal = blurRange.value;
+        const brightVal = brightRange.value;
+        canvasCtx.filter = `blur(${blurVal}px) brightness(${brightVal})`;
         
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.restore();
       }
     }

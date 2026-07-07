@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>專業美肌相機 (最終精修版)</title>
+  <title>專業級精修美顏相機</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -11,7 +11,7 @@
     canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
     #flash { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; opacity: 0; pointer-events: none; transition: opacity 0.3s ease-out; z-index: 100; }
     #statusInfo { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); color: white; padding: 10px 20px; border-radius: 20px; font-size: 14px; font-weight: bold; pointer-events: none; z-index: 10; display: none; }
-    .controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); width: 85%; max-width: 400px; display: flex; flex-direction: column; gap: 10px; z-index: 10; }
+    .controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); width: 85%; max-width: 400px; z-index: 10; }
     .snap-btn { width: 100%; padding: 18px; border: none; border-radius: 50px; background: white; color: black; font-size: 20px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
   </style>
 </head>
@@ -37,9 +37,7 @@
 
     function onResults(results) {
       latestImage = results.image;
-      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-        latestLandmarks = results.multiFaceLandmarks[0];
-      } else { latestLandmarks = null; }
+      latestLandmarks = (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) ? results.multiFaceLandmarks[0] : null;
       if (canvasElement.width !== results.image.width) {
         canvasElement.width = results.image.width;
         canvasElement.height = results.image.height;
@@ -57,22 +55,24 @@
       const ctx = document.createElement('canvas').getContext('2d');
       ctx.canvas.width = w; ctx.canvas.height = h;
       
-      // 1. 高頻細節層 (用於最後還原毛孔)
+      // 1. 高頻細節層 (Texture)
       const hFreq = document.createElement('canvas'); hFreq.width = w; hFreq.height = h;
       const hCtx = hFreq.getContext('2d');
       hCtx.filter = 'blur(1px)'; hCtx.drawImage(latestImage, 0, 0);
       hCtx.globalCompositeOperation = 'difference'; hCtx.drawImage(latestImage, 0, 0);
 
-      // 2. 底層美肌層 (柔化)
-      ctx.filter = 'blur(25px) brightness(1.15) contrast(0.75)';
-      ctx.drawImage(latestImage, 0, 0);
-      
-      // 3. 遮罩挖空五官
-      ctx.globalCompositeOperation = 'destination-in';
-      const g = ctx.createRadialGradient(latestLandmarks[1].x*w, latestLandmarks[1].y*h, w*0.1, latestLandmarks[1].x*w, latestLandmarks[1].y*h, w*0.5);
+      // 2. 柔焦層 (Skin)
+      const skin = document.createElement('canvas'); skin.width = w; skin.height = h;
+      const sCtx = skin.getContext('2d');
+      sCtx.filter = 'blur(25px) brightness(1.1) contrast(0.8)';
+      sCtx.drawImage(latestImage, 0, 0);
+      sCtx.globalCompositeOperation = 'destination-in';
+      const g = sCtx.createRadialGradient(latestLandmarks[1].x*w, latestLandmarks[1].y*h, w*0.1, latestLandmarks[1].x*w, latestLandmarks[1].y*h, w*0.5);
       g.addColorStop(0, '#000'); g.addColorStop(1, 'transparent');
-      ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
-      
+      sCtx.fillStyle = g; sCtx.fillRect(0,0,w,h);
+      ctx.drawImage(skin, 0, 0);
+
+      // 3. 五官挖空
       ctx.globalCompositeOperation = 'destination-out';
       ctx.fillStyle = '#000';
       const erase = (idx) => {
@@ -80,23 +80,23 @@
         idx.forEach((i, n) => n==0 ? ctx.moveTo(latestLandmarks[i].x*w, latestLandmarks[i].y*h) : ctx.lineTo(latestLandmarks[i].x*w, latestLandmarks[i].y*h));
         ctx.closePath(); ctx.fill();
       };
-      erase([33, 160, 158, 133, 153, 144]); erase([362, 385, 387, 263, 373, 380]); // 眼
-      erase([78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95]); // 嘴
+      erase([33, 160, 158, 133, 153, 144]); erase([362, 385, 387, 263, 373, 380]);
+      erase([78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95]);
 
-      // 4. 疊加遮瑕膏 (修正後的正確層級)
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = 'rgba(255, 230, 210, 0.5)';
-      ctx.beginPath();
-      ctx.arc(latestLandmarks[145].x*w, latestLandmarks[145].y*h + h*0.02, w*0.06, 0, Math.PI*2);
-      ctx.arc(latestLandmarks[374].x*w, latestLandmarks[374].y*h + h*0.02, w*0.06, 0, Math.PI*2);
-      ctx.fill();
+      // 4. 羽化遮瑕
+      const concealer = document.createElement('canvas'); concealer.width = w; concealer.height = h;
+      const cCtx = concealer.getContext('2d');
+      cCtx.fillStyle = 'rgba(255, 230, 210, 0.6)';
+      cCtx.beginPath();
+      cCtx.arc(latestLandmarks[145].x*w, latestLandmarks[145].y*h + h*0.02, w*0.06, 0, Math.PI*2);
+      cCtx.arc(latestLandmarks[374].x*w, latestLandmarks[374].y*h + h*0.02, w*0.06, 0, Math.PI*2);
+      cCtx.fill();
+      ctx.filter = 'blur(12px)'; ctx.drawImage(concealer, 0, 0); ctx.filter = 'none';
 
-      // 5. 最後疊加毛孔細節
-      ctx.globalCompositeOperation = 'overlay';
-      ctx.globalAlpha = 0.4;
-      ctx.drawImage(hFreq, 0, 0);
+      // 5. 疊加細節
+      ctx.globalCompositeOperation = 'overlay'; ctx.globalAlpha = 0.4; ctx.drawImage(hFreq, 0, 0);
 
-      // 輸出
+      // 匯出
       const final = document.createElement('canvas'); final.width = w; final.height = h;
       const fCtx = final.getContext('2d');
       fCtx.translate(w, 0); fCtx.scale(-1, 1);
@@ -105,7 +105,6 @@
       link.download = `beauty-${new Date().getTime()}.png`;
       link.href = final.toDataURL('image/png', 1.0);
       link.click();
-
       statusInfo.style.display = 'none'; snapBtn.disabled = false;
     });
 

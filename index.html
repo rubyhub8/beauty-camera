@@ -2,19 +2,15 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>美肌相機 - 第一步：特徵點追蹤</title>
-  <!-- 載入 MediaPipe 核心與視覺化工具 -->
+  <title>美肌相機 - 精準磨皮</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <style>
     body { background: #222; display: flex; justify-content: center; margin-top: 50px; }
-    /* 鏡像翻轉畫布，符合照鏡子的直覺 */
     canvas { transform: scaleX(-1); border-radius: 10px; }
   </style>
 </head>
 <body>
-  <!-- iOS 裝置必須加上 playsinline 才能正確在網頁內播放串流 -->
   <video id="input_video" playsinline style="display: none;"></video>
   <canvas id="output_canvas" width="640" height="480"></canvas>
 
@@ -23,39 +19,46 @@
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
 
-    // 1. 定義畫面繪製邏輯
     function onResults(results) {
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      
-      // 畫出鏡頭底圖
+      // 1. 畫出清晰的原圖
+      canvasCtx.globalCompositeOperation = 'source-over';
+      canvasCtx.filter = 'none';
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-      // 如果有偵測到臉，畫出特徵網格
-      if (results.multiFaceLandmarks) {
-        for (const landmarks of results.multiFaceLandmarks) {
-          // 畫出臉部輪廓與五官
-          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030', lineWidth: 2});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30', lineWidth: 2});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_FACE_OVAL, {color: '#E0E0E0', lineWidth: 2});
-        }
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
+
+        // 2. 建立遮罩範圍（以鼻樑為中心的橢圓形）
+        canvasCtx.save();
+        canvasCtx.beginPath();
+        
+        const nose = landmarks[1];
+        const x = nose.x * canvasElement.width;
+        const y = nose.y * canvasElement.height;
+        
+        canvasCtx.ellipse(x, y, 100, 140, 0, 0, 2 * Math.PI);
+        canvasCtx.clip();
+
+        // 3. 疊加柔焦與提亮效果
+        canvasCtx.filter = 'blur(6px) brightness(1.15)';
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        
+        canvasCtx.restore();
       }
     }
 
-    // 2. 初始化 Face Mesh 模型
     const faceMesh = new FaceMesh({locateFile: (file) => {
       return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
     }});
     
     faceMesh.setOptions({
       maxNumFaces: 1,
-      refineLandmarks: true, // 開啟瞳孔與嘴唇的精細追蹤
+      refineLandmarks: false,
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5
     });
     faceMesh.onResults(onResults);
 
-    // 3. 啟動鏡頭並不斷將畫面送入模型
     const camera = new Camera(videoElement, {
       onFrame: async () => {
         await faceMesh.send({image: videoElement});

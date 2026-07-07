@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>專業美肌相機 (光學遮瑕版)</title>
+  <title>專業美肌相機 (重度遮瑕版)</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -24,11 +24,11 @@
   <div class="controls">
     <div class="control-group">
       <label>粉底磨皮：</label>
-      <input type="range" id="blurRange" min="0" max="30" value="15">
+      <input type="range" id="blurRange" min="0" max="40" value="25">
     </div>
     <div class="control-group">
-      <label>眼下遮瑕：</label>
-      <input type="range" id="concealRange" min="0" max="1.0" step="0.05" value="0.6">
+      <label>強力遮瑕：</label>
+      <input type="range" id="concealRange" min="0" max="1.0" step="0.05" value="0.8">
     </div>
     <button id="snapBtn" class="snap-btn">📸 拍照儲存</button>
   </div>
@@ -48,7 +48,6 @@
         canvasElement.height = results.image.height;
       }
 
-      // 1. 輸出原圖
       canvasCtx.globalCompositeOperation = 'source-over';
       canvasCtx.filter = 'none';
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
@@ -62,7 +61,7 @@
         const top = landmarks[10];
         const chin = landmarks[152];
 
-        // --- 第一道工序：全臉粉底柔焦 (處理淺層毛孔) ---
+        // --- 全臉粉底 ---
         const centerX = nose.x * canvasElement.width;
         const centerY = nose.y * canvasElement.height; 
         const faceWidth = Math.abs(rightCheek.x - leftCheek.x) * canvasElement.width;
@@ -75,8 +74,9 @@
         tempCanvas.height = canvasElement.height;
         const tempCtx = tempCanvas.getContext('2d');
 
+        // 強力壓低對比，把斑點的銳利邊緣強行模糊化
         const blurVal = blurRange.value;
-        tempCtx.filter = `blur(${blurVal}px) brightness(1.1) contrast(0.85)`;
+        tempCtx.filter = `blur(${blurVal}px) brightness(1.15) contrast(0.75)`;
         tempCtx.drawImage(results.image, 0, 0, tempCanvas.width, tempCanvas.height);
 
         tempCtx.globalCompositeOperation = 'destination-in';
@@ -88,7 +88,6 @@
         tempCtx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
         tempCtx.fill();
 
-        // 挖空五官
         tempCtx.globalCompositeOperation = 'destination-out';
         tempCtx.fillStyle = 'black'; 
         const leftEyeIndices = [33, 160, 158, 133, 153, 144];
@@ -112,23 +111,21 @@
         eraseFeature(rightEyeIndices);
         eraseFeature(mouthIndices);
 
-        // 疊加粉底層
         canvasCtx.globalCompositeOperation = 'source-over';
         canvasCtx.drawImage(tempCanvas, 0, 0);
 
-        // --- 第二道工序：局部光學遮瑕 (消滅黑斑與紋路陰影) ---
-        // 使用 screen (濾色) 模式，將帶有蜜桃膚色的光暈精準打在眼袋與法令紋凹陷處
+        // --- 顴骨重度遮瑕 (Color Dodge) ---
         const concealStrength = concealRange.value;
         if (concealStrength > 0) {
-            canvasCtx.globalCompositeOperation = 'screen';
+            canvasCtx.globalCompositeOperation = 'color-dodge';
             canvasCtx.globalAlpha = concealStrength;
 
-            // 定義遮瑕液的繪製函式
             const drawConcealer = (x, y, radiusX, radiusY, rotation) => {
                 const grad = canvasCtx.createRadialGradient(x, y, 0, x, y, radiusX);
-                // 使用蜜桃橘膚色中和黑眼圈斑點，中心不透明，邊緣羽化消失
-                grad.addColorStop(0, 'rgba(255, 215, 190, 0.8)'); 
-                grad.addColorStop(1, 'rgba(255, 215, 190, 0)');
+                // 提高不透明度與白度
+                grad.addColorStop(0, 'rgba(255, 230, 210, 0.9)'); 
+                grad.addColorStop(0.6, 'rgba(255, 230, 210, 0.4)');
+                grad.addColorStop(1, 'rgba(255, 230, 210, 0)');
                 
                 canvasCtx.save();
                 canvasCtx.translate(x, y);
@@ -140,33 +137,20 @@
                 canvasCtx.restore();
             };
 
-            // 1. 左眼下遮瑕 (對應黑斑與淚溝)
-            const leftEyeBottom = landmarks[145];
-            drawConcealer(
-                leftEyeBottom.x * canvasElement.width, 
-                (leftEyeBottom.y * canvasElement.height) + (faceHeight * 0.08), 
-                faceWidth * 0.18, 
-                faceWidth * 0.12, 
-                -0.2
-            );
+            // 鎖定左側顴骨 (117)
+            const leftCheekbone = landmarks[117];
+            drawConcealer(leftCheekbone.x * canvasElement.width, leftCheekbone.y * canvasElement.height, faceWidth * 0.25, faceWidth * 0.18, -0.2);
 
-            // 2. 右眼下遮瑕 (對應黑斑與淚溝)
-            const rightEyeBottom = landmarks[374];
-            drawConcealer(
-                rightEyeBottom.x * canvasElement.width, 
-                (rightEyeBottom.y * canvasElement.height) + (faceHeight * 0.08), 
-                faceWidth * 0.18, 
-                faceWidth * 0.12, 
-                0.2
-            );
+            // 鎖定右側顴骨 (346)
+            const rightCheekbone = landmarks[346];
+            drawConcealer(rightCheekbone.x * canvasElement.width, rightCheekbone.y * canvasElement.height, faceWidth * 0.25, faceWidth * 0.18, 0.2);
 
-            // 3. 兩側法令紋提亮 (光學撫平紋路)
+            // 法令紋提亮
             const leftNoseWing = landmarks[114];
             const rightNoseWing = landmarks[343];
-            drawConcealer(leftNoseWing.x * canvasElement.width, leftNoseWing.y * canvasElement.height + (faceHeight * 0.05), faceWidth * 0.08, faceWidth * 0.15, 0.4);
-            drawConcealer(rightNoseWing.x * canvasElement.width, rightNoseWing.y * canvasElement.height + (faceHeight * 0.05), faceWidth * 0.08, faceWidth * 0.15, -0.4);
+            drawConcealer(leftNoseWing.x * canvasElement.width, leftNoseWing.y * canvasElement.height, faceWidth * 0.1, faceWidth * 0.15, 0.3);
+            drawConcealer(rightNoseWing.x * canvasElement.width, rightNoseWing.y * canvasElement.height, faceWidth * 0.1, faceWidth * 0.15, -0.3);
 
-            // 恢復預設繪圖屬性
             canvasCtx.globalAlpha = 1.0;
             canvasCtx.globalCompositeOperation = 'source-over';
         }

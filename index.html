@@ -1,43 +1,121 @@
-function onResults(results) {
-      // 1. 將清晰原圖畫在底層
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>美肌相機 - 動態比例校正</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <style>
+    body { background: #222; display: flex; flex-direction: column; align-items: center; margin-top: 20px; font-family: sans-serif; color: white; }
+    canvas { transform: scaleX(-1); border-radius: 10px; max-width: 100%; }
+    .controls { margin-top: 20px; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 8px; width: 90%; max-width: 400px; }
+    .control-group { margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+    .control-group label { flex: 1; font-size: 14px; }
+    .control-group input { flex: 2; }
+  </style>
+</head>
+<body>
+  <video id="input_video" playsinline style="display: none;"></video>
+  <canvas id="output_canvas"></canvas>
+
+  <div class="controls">
+    <div class="control-group">
+      <label>磨皮強度：</label>
+      <input type="range" id="blurRange" min="0" max="15" value="6">
+    </div>
+    <div class="control-group">
+      <label>美白亮度：</label>
+      <input type="range" id="brightRange" min="1.0" max="1.5" step="0.05" value="1.15">
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    
+    const blurRange = document.getElementById('blurRange');
+    const brightRange = document.getElementById('brightRange');
+
+    function onResults(results) {
+      // 1. 動態校正畫布比例
+      if (canvasElement.width !== results.image.width || canvasElement.height !== results.image.height) {
+        canvasElement.width = results.image.width;
+        canvasElement.height = results.image.height;
+      }
+
       canvasCtx.globalCompositeOperation = 'source-over';
       canvasCtx.filter = 'none';
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
       if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
+        
+        // 2. 抓取臉部邊界座標
         const nose = landmarks[1];
+        const leftCheek = landmarks[234];
+        const rightCheek = landmarks[454];
+        const top = landmarks[10];
+        const chin = landmarks[152];
+
         const x = nose.x * canvasElement.width;
         const y = nose.y * canvasElement.height;
+        
+        // 3. 計算動態比例
+        const faceWidth = Math.abs(rightCheek.x - leftCheek.x) * canvasElement.width;
+        const faceHeight = Math.abs(chin.y - top.y) * canvasElement.height;
+        
+        const radiusX = faceWidth * 0.6; 
+        const radiusY = faceHeight * 0.6;
 
-        // 2. 建立離線畫布來處理美肌圖層 (避免直接污染主畫面)
+        // 4. 離線畫布處理
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = canvasElement.width;
         tempCanvas.height = canvasElement.height;
         const tempCtx = tempCanvas.getContext('2d');
 
-        // 3. 在離線畫布上套用美肌濾鏡
         const blurVal = blurRange.value;
         const brightVal = brightRange.value;
         tempCtx.filter = `blur(${blurVal}px) brightness(${brightVal})`;
         tempCtx.drawImage(results.image, 0, 0, tempCanvas.width, tempCanvas.height);
 
-        // 4. 製作漸層羽化遮罩 (核心修正)
-        // 使用 destination-in，讓漸層透明度決定美肌圖層的顯示範圍
+        // 5. 漸層遮罩
         tempCtx.globalCompositeOperation = 'destination-in';
-        
-        // 設定放射狀漸層：中心全滿(1)，擴散到外圍變透明(0)
-        const gradient = tempCtx.createRadialGradient(x, y, 40, x, y, 130);
+        const gradient = tempCtx.createRadialGradient(x, y, radiusX * 0.4, x, y, radiusX * 1.2);
         gradient.addColorStop(0, 'rgba(0, 0, 0, 1)'); 
         gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
         
         tempCtx.fillStyle = gradient;
         tempCtx.beginPath();
-        tempCtx.ellipse(x, y, 100, 140, 0, 0, 2 * Math.PI);
+        tempCtx.ellipse(x, y, radiusX, radiusY, 0, 0, 2 * Math.PI);
         tempCtx.fill();
 
-        // 5. 將羽化後的美肌圖層疊加回主畫面
+        // 6. 疊加輸出
         canvasCtx.globalCompositeOperation = 'source-over';
         canvasCtx.drawImage(tempCanvas, 0, 0);
       }
     }
+
+    const faceMesh = new FaceMesh({locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+    }});
+    
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    faceMesh.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await faceMesh.send({image: videoElement});
+      },
+      width: 1280,
+      height: 720
+    });
+    camera.start();
+  </script>
+</body>
+</html>

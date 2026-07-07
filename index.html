@@ -1,221 +1,73 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>專業美肌相機 (後台精修版)</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <style>
-    body { margin: 0; padding: 0; background: #000; overflow: hidden; display: flex; flex-direction: column; justify-content: center; height: 100vh; font-family: sans-serif; }
-    /* 預覽畫面：保持原圖流暢度 */
-    canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-    
-    /* 拍照閃光特效 */
-    #flash { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; opacity: 0; pointer-events: none; transition: opacity 0.3s ease-out; z-index: 100; }
-    
-    /* 狀態提示 */
-    #statusInfo { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); color: white; padding: 10px 20px; border-radius: 20px; font-size: 14px; font-weight: bold; pointer-events: none; z-index: 10; display: none; }
-
-    .controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); width: 85%; max-width: 400px; display: flex; flex-direction: column; gap: 10px; z-index: 10; }
-    .snap-btn { width: 100%; padding: 18px; border: none; border-radius: 50px; background: white; color: black; font-size: 20px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); transition: 0.1s; }
-    .snap-btn:active { background: #ddd; transform: scale(0.95); }
-  </style>
-</head>
-<body>
-  <div id="flash"></div>
-  <div id="statusInfo">處理中，請稍候...</div>
-  
-  <video id="input_video" playsinline style="display: none;"></video>
-  <canvas id="output_canvas"></canvas>
-
-  <div class="controls">
-    <button id="snapBtn" class="snap-btn">📸 拍照</button>
-  </div>
-
-  <script>
-    const videoElement = document.getElementById('input_video');
-    const canvasElement = document.getElementById('output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
-    const snapBtn = document.getElementById('snapBtn');
-    const flashElement = document.getElementById('flash');
-    const statusInfo = document.getElementById('statusInfo');
-
-    let latestImage = null;
-    let latestLandmarks = null;
-
-    // 1. 即時預覽引擎 (只顯示原圖，確保 60fps 不卡頓)
-    function onResults(results) {
-      latestImage = results.image;
-      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-        latestLandmarks = results.multiFaceLandmarks[0];
-      } else {
-        latestLandmarks = null;
-      }
-
-      if (canvasElement.width !== results.image.width || canvasElement.height !== results.image.height) {
-        canvasElement.width = results.image.width;
-        canvasElement.height = results.image.height;
-      }
-      
-      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-    }
-
-    // 2. 快門後台 AI 精修處理
-    snapBtn.addEventListener('click', async () => {
-      if (!latestImage || !latestLandmarks) {
-        alert("請確保臉部在畫面中！");
-        return;
-      }
-
-      // 觸發閃光燈與提示文字
-      flashElement.style.opacity = 1;
-      setTimeout(() => flashElement.style.opacity = 0, 100);
-      statusInfo.style.display = 'block';
-      snapBtn.disabled = true;
-
-      // 給瀏覽器一瞬間更新 UI (顯示「處理中」)
-      await new Promise(resolve => setTimeout(resolve, 50));
-
-      // 建立高畫質離線畫布
-      const w = latestImage.width;
-      const h = latestImage.height;
-      const saveCanvas = document.createElement('canvas');
-      saveCanvas.width = w;
-      saveCanvas.height = h;
-      const ctx = saveCanvas.getContext('2d');
-
-      // 步驟 A：畫入原圖底層
-      ctx.drawImage(latestImage, 0, 0, w, h);
-
-      // 步驟 B：重度粉底柔焦
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = w;
-      tempCanvas.height = h;
-      const tempCtx = tempCanvas.getContext('2d');
-
-      // 強力壓低對比與提亮
-      tempCtx.filter = 'blur(25px) brightness(1.15) contrast(0.75)';
-      tempCtx.drawImage(latestImage, 0, 0, w, h);
-
-      const nose = latestLandmarks[1];
-      const leftCheek = latestLandmarks[234];
-      const rightCheek = latestLandmarks[454];
-      const top = latestLandmarks[10];
-      const chin = latestLandmarks[152];
-
-      const faceWidth = Math.abs(rightCheek.x - leftCheek.x) * w;
-      const faceHeight = Math.abs(chin.y - top.y) * h;
-      
-      // 遮罩範圍
-      tempCtx.globalCompositeOperation = 'destination-in';
-      const gradient = tempCtx.createRadialGradient(nose.x * w, nose.y * h, faceWidth * 0.6, nose.x * w, nose.y * h, faceWidth * 1.1);
-      gradient.addColorStop(0, 'rgba(0,0,0,1)');
-      gradient.addColorStop(1, 'rgba(0,0,0,0)');
-      tempCtx.fillStyle = gradient;
-      tempCtx.beginPath();
-      tempCtx.ellipse(nose.x * w, nose.y * h, faceWidth * 0.75, faceHeight * 0.75, 0, 0, 2 * Math.PI);
-      tempCtx.fill();
-
-      // 挖空五官
-      tempCtx.globalCompositeOperation = 'destination-out';
-      tempCtx.fillStyle = 'black';
-      const leftEyeIndices = [33, 160, 158, 133, 153, 144];
-      const rightEyeIndices = [362, 385, 387, 263, 373, 380];
-      const mouthIndices = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95];
-      const eraseFeature = (indices) => {
-        tempCtx.beginPath();
-        indices.forEach((index, i) => {
-          if (i === 0) tempCtx.moveTo(latestLandmarks[index].x * w, latestLandmarks[index].y * h);
-          else tempCtx.lineTo(latestLandmarks[index].x * w, latestLandmarks[index].y * h);
-        });
-        tempCtx.closePath();
-        tempCtx.fill();
-      };
-      eraseFeature(leftEyeIndices);
-      eraseFeature(rightEyeIndices);
-      eraseFeature(mouthIndices);
-
-      // 疊加粉底層到主畫布
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 0.9;
-      ctx.drawImage(tempCanvas, 0, 0);
-
-      // 步驟 C：自動精準鎖定「眼下黑斑」與「法令紋」進行強效提亮
-      ctx.globalCompositeOperation = 'color-dodge';
-      ctx.globalAlpha = 0.8; // 遮瑕強度
-
-      const drawConcealer = (x, y, radiusX, radiusY, rotation) => {
-        const grad = ctx.createRadialGradient(x, y, 0, x, y, radiusX);
-        grad.addColorStop(0, 'rgba(255, 230, 210, 0.9)'); // 蜜桃提亮色
-        grad.addColorStop(0.5, 'rgba(255, 230, 210, 0.4)');
-        grad.addColorStop(1, 'rgba(255, 230, 210, 0)');
+// 升級後的拍照處理函式 (直接覆蓋原本的 snapBtn.addEventListener)
+      snapBtn.addEventListener('click', async () => {
+        if (!latestImage || !latestLandmarks) return;
         
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(rotation);
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, radiusX, radiusY, 0, 0, 2 * Math.PI);
-        ctx.fill();
-        ctx.restore();
-      };
+        flashElement.style.opacity = 1;
+        setTimeout(() => flashElement.style.opacity = 0, 100);
+        statusInfo.style.display = 'block';
+        snapBtn.disabled = true;
 
-      // 1. 左眼下三角區 (針對淚溝與斑點)
-      const leftEyeBottom = latestLandmarks[145];
-      drawConcealer(leftEyeBottom.x * w, (leftEyeBottom.y * h) + (faceHeight * 0.07), faceWidth * 0.2, faceWidth * 0.15, -0.2);
+        await new Promise(resolve => setTimeout(resolve, 50));
 
-      // 2. 右眼下三角區 (針對淚溝與斑點)
-      const rightEyeBottom = latestLandmarks[374];
-      drawConcealer(rightEyeBottom.x * w, (rightEyeBottom.y * h) + (faceHeight * 0.07), faceWidth * 0.2, faceWidth * 0.15, 0.2);
+        const w = latestImage.width;
+        const h = latestImage.height;
+        const saveCanvas = document.createElement('canvas');
+        saveCanvas.width = w; saveCanvas.height = h;
+        const ctx = saveCanvas.getContext('2d');
+        ctx.drawImage(latestImage, 0, 0, w, h);
 
-      // 3. 左側法令紋
-      const leftNoseWing = latestLandmarks[114];
-      drawConcealer(leftNoseWing.x * w, (leftNoseWing.y * h) + (faceHeight * 0.04), faceWidth * 0.08, faceWidth * 0.15, 0.3);
+        // --- A. 高頻提取 (保留毛孔細節) ---
+        // 商業級核心：美顏但不失去皮膚紋理
+        const highFreq = document.createElement('canvas');
+        highFreq.width = w; highFreq.height = h;
+        const hCtx = highFreq.getContext('2d');
+        hCtx.filter = 'blur(1px)';
+        hCtx.drawImage(latestImage, 0, 0, w, h);
+        hCtx.globalCompositeOperation = 'difference';
+        hCtx.drawImage(latestImage, 0, 0, w, h);
 
-      // 4. 右側法令紋
-      const rightNoseWing = latestLandmarks[343];
-      drawConcealer(rightNoseWing.x * w, (rightNoseWing.y * h) + (faceHeight * 0.04), faceWidth * 0.08, faceWidth * 0.15, -0.3);
+        // --- B. 深度美肌 (柔化+亮度優化) ---
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = w; tempCanvas.height = h;
+        const tempCtx = tempCanvas.getContext('2d');
+        // 提高亮度並大幅降低對比，製造「白瓷肌」感
+        tempCtx.filter = 'blur(30px) brightness(1.2) contrast(0.7)';
+        tempCtx.drawImage(latestImage, 0, 0, w, h);
+        
+        // 遮罩處理 (同前)
+        tempCtx.globalCompositeOperation = 'destination-in';
+        const grad = tempCtx.createRadialGradient(latestLandmarks[1].x*w, latestLandmarks[1].y*h, 0, latestLandmarks[1].x*w, latestLandmarks[1].y*h, w*0.4);
+        grad.addColorStop(0, 'rgba(0,0,0,1)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+        tempCtx.fillStyle = grad; tempCtx.fillRect(0,0,w,h);
 
-      // 步驟 D：鏡像翻轉並匯出照片
-      const finalCanvas = document.createElement('canvas');
-      finalCanvas.width = w;
-      finalCanvas.height = h;
-      const finalCtx = finalCanvas.getContext('2d');
-      finalCtx.translate(w, 0);
-      finalCtx.scale(-1, 1);
-      finalCtx.drawImage(saveCanvas, 0, 0);
+        // --- C. 專業修容 (遮瑕+立體光) ---
+        // 針對眼下黑斑，使用「疊色技術」而非暴力提亮
+        tempCtx.globalCompositeOperation = 'source-over';
+        tempCtx.fillStyle = 'rgba(255, 230, 210, 0.4)'; // 蜜桃色調
+        tempCtx.beginPath();
+        // 精準標註眼下黑斑區塊
+        tempCtx.arc(latestLandmarks[145].x*w, latestLandmarks[145].y*h + h*0.02, w*0.08, 0, Math.PI*2);
+        tempCtx.arc(latestLandmarks[374].x*w, latestLandmarks[374].y*h + h*0.02, w*0.08, 0, Math.PI*2);
+        tempCtx.fill();
 
-      const link = document.createElement('a');
-      link.download = `beauty-cam-${new Date().getTime()}.png`;
-      link.href = finalCanvas.toDataURL('image/png', 1.0);
-      link.click();
+        ctx.drawImage(tempCanvas, 0, 0);
+        
+        // 疊回高頻細節 (保留真實毛孔)
+        ctx.globalCompositeOperation = 'overlay';
+        ctx.globalAlpha = 0.3;
+        ctx.drawImage(highFreq, 0, 0);
 
-      // 恢復 UI 狀態
-      statusInfo.style.display = 'none';
-      snapBtn.disabled = false;
-    });
+        // --- 匯出 ---
+        const finalCanvas = document.createElement('canvas');
+        finalCanvas.width = w; finalCanvas.height = h;
+        const finalCtx = finalCanvas.getContext('2d');
+        finalCtx.translate(w, 0); finalCtx.scale(-1, 1);
+        finalCtx.drawImage(ctx.canvas, 0, 0);
+        const link = document.createElement('a');
+        link.download = `beauty-photo-${new Date().getTime()}.png`;
+        link.href = finalCanvas.toDataURL('image/png', 1.0);
+        link.click();
 
-    const faceMesh = new FaceMesh({locateFile: (file) => {
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-    }});
-    
-    faceMesh.setOptions({
-      maxNumFaces: 1,
-      refineLandmarks: false,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-    faceMesh.onResults(onResults);
-
-    const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await faceMesh.send({image: videoElement});
-      },
-      width: 1280,
-      height: 720
-    });
-    camera.start();
-  </script>
-</body>
-</html>
+        statusInfo.style.display = 'none';
+        snapBtn.disabled = false;
+      });

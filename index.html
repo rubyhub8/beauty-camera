@@ -2,16 +2,40 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>美肌相機 - 動態比例校正</title>
+  <title>美肌相機 - 拍照升級版</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
-    body { background: #222; display: flex; flex-direction: column; align-items: center; margin-top: 20px; font-family: sans-serif; color: white; }
-    canvas { transform: scaleX(-1); border-radius: 10px; max-width: 100%; }
-    .controls { margin-top: 20px; background: rgba(0,0,0,0.6); padding: 15px; border-radius: 8px; width: 90%; max-width: 400px; }
-    .control-group { margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-    .control-group label { flex: 1; font-size: 14px; }
+    /* 重設網頁邊距，鎖定視窗不滾動 */
+    body { 
+      margin: 0; padding: 0; background: #111; overflow: hidden; 
+      display: flex; flex-direction: column; justify-content: center; height: 100vh; font-family: sans-serif;
+    }
+    
+    /* 畫布自適應螢幕大小 */
+    canvas { 
+      width: 100%; height: 100%; object-fit: cover; 
+      transform: scaleX(-1); /* 畫面鏡像翻轉 */
+    }
+
+    /* 控制面板絕對定位於底部 */
+    .controls { 
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.75); padding: 20px; border-radius: 16px; 
+      width: 85%; max-width: 400px; color: white; backdrop-filter: blur(5px);
+    }
+    .control-group { margin-bottom: 15px; display: flex; align-items: center; }
+    .control-group label { flex: 1; font-size: 15px; font-weight: bold; }
     .control-group input { flex: 2; }
+
+    /* 拍照按鈕樣式 */
+    .snap-btn {
+      width: 100%; padding: 14px; border: none; border-radius: 10px;
+      background: #FF3B30; color: white; font-size: 18px; font-weight: bold; 
+      cursor: pointer; transition: 0.2s;
+    }
+    .snap-btn:active { background: #CC2E26; transform: scale(0.98); }
   </style>
 </head>
 <body>
@@ -21,12 +45,13 @@
   <div class="controls">
     <div class="control-group">
       <label>磨皮強度：</label>
-      <input type="range" id="blurRange" min="0" max="15" value="6">
+      <input type="range" id="blurRange" min="0" max="30" value="15">
     </div>
     <div class="control-group">
       <label>美白亮度：</label>
-      <input type="range" id="brightRange" min="1.0" max="1.5" step="0.05" value="1.15">
+      <input type="range" id="brightRange" min="1.0" max="1.5" step="0.05" value="1.2">
     </div>
+    <button id="snapBtn" class="snap-btn">📸 拍照儲存</button>
   </div>
 
   <script>
@@ -36,9 +61,9 @@
     
     const blurRange = document.getElementById('blurRange');
     const brightRange = document.getElementById('brightRange');
+    const snapBtn = document.getElementById('snapBtn');
 
     function onResults(results) {
-      // 1. 動態校正畫布比例
       if (canvasElement.width !== results.image.width || canvasElement.height !== results.image.height) {
         canvasElement.width = results.image.width;
         canvasElement.height = results.image.height;
@@ -50,8 +75,6 @@
 
       if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
-        
-        // 2. 抓取臉部邊界座標
         const nose = landmarks[1];
         const leftCheek = landmarks[234];
         const rightCheek = landmarks[454];
@@ -61,14 +84,13 @@
         const x = nose.x * canvasElement.width;
         const y = nose.y * canvasElement.height;
         
-        // 3. 計算動態比例
         const faceWidth = Math.abs(rightCheek.x - leftCheek.x) * canvasElement.width;
         const faceHeight = Math.abs(chin.y - top.y) * canvasElement.height;
         
-        const radiusX = faceWidth * 0.6; 
-        const radiusY = faceHeight * 0.6;
+        // 放大遮罩覆蓋範圍
+        const radiusX = faceWidth * 0.7; 
+        const radiusY = faceHeight * 0.7;
 
-        // 4. 離線畫布處理
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = canvasElement.width;
         tempCanvas.height = canvasElement.height;
@@ -79,9 +101,8 @@
         tempCtx.filter = `blur(${blurVal}px) brightness(${brightVal})`;
         tempCtx.drawImage(results.image, 0, 0, tempCanvas.width, tempCanvas.height);
 
-        // 5. 漸層遮罩
         tempCtx.globalCompositeOperation = 'destination-in';
-        const gradient = tempCtx.createRadialGradient(x, y, radiusX * 0.4, x, y, radiusX * 1.2);
+        const gradient = tempCtx.createRadialGradient(x, y, radiusX * 0.3, x, y, radiusX * 1.2);
         gradient.addColorStop(0, 'rgba(0, 0, 0, 1)'); 
         gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
         
@@ -90,11 +111,29 @@
         tempCtx.ellipse(x, y, radiusX, radiusY, 0, 0, 2 * Math.PI);
         tempCtx.fill();
 
-        // 6. 疊加輸出
         canvasCtx.globalCompositeOperation = 'source-over';
         canvasCtx.drawImage(tempCanvas, 0, 0);
       }
     }
+
+    // 拍照按鈕功能：鏡像翻轉並下載
+    snapBtn.addEventListener('click', () => {
+      const saveCanvas = document.createElement('canvas');
+      saveCanvas.width = canvasElement.width;
+      saveCanvas.height = canvasElement.height;
+      const ctx = saveCanvas.getContext('2d');
+      
+      // 將影像左右翻轉回來，讓儲存的照片正常顯示
+      ctx.translate(saveCanvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(canvasElement, 0, 0);
+
+      // 觸發下載機制
+      const link = document.createElement('a');
+      link.download = `beauty-cam-${new Date().getTime()}.png`;
+      link.href = saveCanvas.toDataURL('image/png');
+      link.click();
+    });
 
     const faceMesh = new FaceMesh({locateFile: (file) => {
       return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;

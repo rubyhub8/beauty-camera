@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>美肌相機 - 第一步：特徵點追蹤</title>
+  <!-- 載入 MediaPipe 核心與視覺化工具 -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <style>
+    body { background: #222; display: flex; justify-content: center; margin-top: 50px; }
+    /* 鏡像翻轉畫布，符合照鏡子的直覺 */
+    canvas { transform: scaleX(-1); border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <!-- iOS 裝置必須加上 playsinline 才能正確在網頁內播放串流 -->
+  <video id="input_video" playsinline style="display: none;"></video>
+  <canvas id="output_canvas" width="640" height="480"></canvas>
+
+  <script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    // 1. 定義畫面繪製邏輯
+    function onResults(results) {
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      
+      // 畫出鏡頭底圖
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      // 如果有偵測到臉，畫出特徵網格
+      if (results.multiFaceLandmarks) {
+        for (const landmarks of results.multiFaceLandmarks) {
+          // 畫出臉部輪廓與五官
+          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030', lineWidth: 2});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30', lineWidth: 2});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_FACE_OVAL, {color: '#E0E0E0', lineWidth: 2});
+        }
+      }
+    }
+
+    // 2. 初始化 Face Mesh 模型
+    const faceMesh = new FaceMesh({locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+    }});
+    
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true, // 開啟瞳孔與嘴唇的精細追蹤
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    faceMesh.onResults(onResults);
+
+    // 3. 啟動鏡頭並不斷將畫面送入模型
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await faceMesh.send({image: videoElement});
+      },
+      width: 640,
+      height: 480
+    });
+    camera.start();
+  </script>
+</body>
+</html>
